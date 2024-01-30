@@ -34,9 +34,9 @@ print("loading dataset...")
 image_paths,labels = load_dataset_celeb_a("./dataset/celeb_a/list_attr_celeba.csv","./dataset/celeb_a/img_align_celeba/img_align_celeba/")
 ds = tf.data.Dataset.from_tensor_slices((image_paths,labels))
 ds = ds.map(load_image)
-dataset_train = ds.take(int(len(ds)*0.8)).shuffle(buffer_size=64000).batch(3072).prefetch(tf.data.AUTOTUNE)
-dataset_valid = ds.skip(int(len(ds)*0.8)).take(int(len(ds)*0.1)).shuffle(buffer_size=8000).batch(3072).prefetch(tf.data.AUTOTUNE)
-dataset_test = ds.skip(int(len(ds)*0.8)).skip(int(len(ds)*0.1)).shuffle(buffer_size=8000).batch(3072).prefetch(tf.data.AUTOTUNE)
+dataset_train = ds.take(int(len(ds)*0.8)).shuffle(buffer_size=64000).batch(1024).prefetch(tf.data.AUTOTUNE)
+dataset_valid = ds.skip(int(len(ds)*0.8)).take(int(len(ds)*0.1)).shuffle(buffer_size=8000).batch(1024).prefetch(tf.data.AUTOTUNE)
+dataset_test = ds.skip(int(len(ds)*0.8)).skip(int(len(ds)*0.1)).shuffle(buffer_size=8000).batch(1024).prefetch(tf.data.AUTOTUNE)
 
 print("initializing models...")
 # Initialize model and optimizer params
@@ -46,6 +46,9 @@ evaluation_dense_params = EvaluationHead(40).init(subkey,jnp.ones((2,2048)))
 
 subkey,key = jax.random.split(key)
 alexnet_params = AlexNet().init(subkey,jnp.ones((10,178,178,3)),jax.random.key(0),True)
+
+subkey,key = jax.random.split(key)
+target_alexnet_params = AlexNet().init(subkey,jnp.ones((10,178,178,3)),jax.random.key(0),True)
 
 subkey,key = jax.random.split(key)
 speaker_params = Speaker(256,20,10,10).init(subkey,jnp.ones((2,2048)),0,jnp.zeros((2,1),dtype=jnp.int8),jax.random.key(0))
@@ -78,19 +81,19 @@ os.makedirs("./saves/train_lewis_seed_" + str(SEED) + "_" + str(NUM_DISTRACTORS)
 
 for epoch in tqdm(range(10000)):
     for image,_ in dataset_valid.as_numpy_iterator():
-
+        
         #######################################
         ########## validation step ############
         #######################################
 
         subkey,key = jax.random.split(key)
-        (loss,(reward,Lv,LPolicy,Lentropy,LKlDiv,LReceiver,values,entropies,target_distractor_similarities)),_ = forward_lewis(alexnet_params,speaker_params,target_speaker_params,listener_params,image,subkey,NUM_DISTRACTORS,1,False)
+        (loss,(reward,Lv,LPolicy,Lentropy,LKlDiv,LReceiver,values,entropies,target_distractor_similarities)),_ = forward_lewis(alexnet_params,speaker_params,target_speaker_params,target_alexnet_params,listener_params,image,subkey,NUM_DISTRACTORS,1,False)
         auxagg.add(epoch,["valid_loss","valid_acc"],[loss,reward])
 
     for image,_ in dataset_train.as_numpy_iterator():
 
         subkey,key = jax.random.split(key)
-        (loss,(reward,Lv,LPolicy,Lentropy,LKlDiv,LReceiver,values,entropies,target_distractor_similarities)),grads= forward_lewis(alexnet_params,speaker_params,target_speaker_params,listener_params,image,subkey,NUM_DISTRACTORS,0,True)
+        (loss,(reward,Lv,LPolicy,Lentropy,LKlDiv,LReceiver,values,entropies,target_distractor_similarities)),grads= forward_lewis(alexnet_params,speaker_params,target_speaker_params,target_alexnet_params,listener_params,image,subkey,NUM_DISTRACTORS,0,True)
         auxagg.add(epoch,["train_loss","train_acc"],[loss,reward])
 
         updates, alexnet_opt_params = alexnet_optimizer.update(grads[0], alexnet_opt_params)
@@ -102,6 +105,7 @@ for epoch in tqdm(range(10000)):
         updates, listener_opt_params = listener_optimizer.update(grads[2], listener_opt_params)
         listener_params = optax.apply_updates(listener_params, updates)
 
+        target_alexnet_params = jax.tree_map(lambda x,y : 0.99*x+0.01*y,target_alexnet_params,alexnet_params)
         target_speaker_params = jax.tree_map(lambda x,y : 0.99*x+0.01*y,target_speaker_params,speaker_params)
 
     auxagg.collapse(epoch)
