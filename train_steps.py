@@ -9,9 +9,12 @@ from jax.lib import xla_bridge
 import optax
 from utils import gauss_kernel_2d
 
-@partial(jax.jit, static_argnums=(6,7,8))
-@partial(jax.value_and_grad, argnums=(0,1,3),has_aux=True)
-def forward_lewis(encoder_params : jax.Array, speaker_params : jax.Array ,target_speaker_params : jax.Array,listener_params : jax.Array,images,key,num_distractors : int ,mode : int, training : bool):
+@partial(jax.jit, static_argnums=(7,8,9))
+@partial(jax.value_and_grad, argnums=(0,1,4),has_aux=True)
+def forward_lewis(encoder_params : jax.Array, speaker_params : jax.Array ,target_speaker_params : jax.Array,target_encoder_params : jax.Array, listener_params : jax.Array,images,key,num_distractors : int ,mode : int, training : bool):
+    
+    subkey,key = jax.random.split(key)
+    target_images = AlexNet().apply(target_encoder_params,images,subkey,True)
     
     subkey,key = jax.random.split(key)
     images = AlexNet().apply(encoder_params,images,subkey,True)
@@ -19,7 +22,7 @@ def forward_lewis(encoder_params : jax.Array, speaker_params : jax.Array ,target
     subkey,key = jax.random.split(key)
     (logits,values,action_logprobs,entropies,message) = Speaker(256,20,10,10).apply(speaker_params,images,mode,jnp.zeros((1,),dtype=jnp.int8),subkey)
     subkey,key = jax.random.split(key)
-    (target_logits,_,_,_,_) = Speaker(256,20,10,10).apply(target_speaker_params,images,2,message,subkey)
+    (target_logits,_,_,_,_) = Speaker(256,20,10,10).apply(target_speaker_params,target_images,2,message,subkey)
 
     images_encoded,hidden_encoded = Listener(512,20,10,256).apply(listener_params,images,message)
 
